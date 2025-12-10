@@ -1,0 +1,18 @@
+services:
+  detector-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: detector-app
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persist database and photos outside container
+      - ./instance:/app/instance
+      - ./saved_photos:/app/saved_photos
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-this}
+      - DATABASE_PATH=/app/instance/gooberdetector.db
+      - UPLOAD_FOLDER=/app/saved_photos
+    restart: unless-stopped

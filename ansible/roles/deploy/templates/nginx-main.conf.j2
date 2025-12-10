@@ -1,0 +1,87 @@
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+
+    upstream production_backend {
+        server production-detector-app:3000;
+    }
+
+{% for lookaside in lookaside_instances | default([]) %}
+    upstream lookaside_{{ lookaside.pr_number }}_backend {
+        server lookaside-pr{{ lookaside.pr_number }}-detector-app:3000;
+    }
+{% endfor %}
+
+    server {
+        listen 80;
+        server_name _;
+
+        client_max_body_size 16M;
+
+{% for lookaside in lookaside_instances | default([]) %}
+        # Lookaside instance for PR #{{ lookaside.pr_number }}
+        # Handle /pr-{number} without trailing slash - redirect to with trailing slash
+        location = /pr-{{ lookaside.pr_number }} {
+            return 301 /pr-{{ lookaside.pr_number }}/;
+        }
+        
+        # Handle /pr-{number}/ and all sub-paths
+        # Use prefix location with proxy_pass that includes trailing slash
+        # This tells nginx to replace the location prefix with the proxy_pass URI
+        location /pr-{{ lookaside.pr_number }}/ {
+            # proxy_pass with trailing slash replaces /pr-{number}/ with /
+            proxy_pass http://lookaside_{{ lookaside.pr_number }}_backend/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+{% endfor %}
+
+        # Production instance - root path (must be last to catch all other paths)
+        location / {
+            proxy_pass http://production_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # WebSocket support (if needed in future)
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+}

@@ -1,0 +1,401 @@
+name: Release PR Pipeline
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+    branches:
+      - 'release-*'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  run-tests:
+    runs-on: self-hosted
+    if: github.event.action != 'closed'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python for actions
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install node for actions
+        uses: actions/setup-node@v4
+        with:
+          node-version: latest
+      - name: Python pip installs
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install pytest
+          pip install -r detector/requirements.txt
+      - name: Install npm
+        run: npm install
+      - name: Pytest testing
+        run: pytest
+      - name: npm tests
+        run: npm test
+
+  run-linter:
+    runs-on: self-hosted
+    needs: run-tests
+    if: |
+      github.event.action != 'closed' &&
+      needs.run-tests.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python for actions
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pylint
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install pylint
+      - name: Run pylint on Python code
+        run: |
+          pylint detector/ --fail-under=7.0
+
+  dependency-check:
+    runs-on: self-hosted
+    needs: run-linter
+    if: |
+      github.event.action != 'closed' &&
+      needs.run-linter.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python for actions
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install node for actions
+        uses: actions/setup-node@v4
+        with:
+          node-version: latest
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install pip-audit
+      - name: Run pip-audit on Python dependencies
+        run: |
+          pip-audit -r detector/requirements.txt --format columns
+      - name: Run npm audit on Node.js dependencies
+        run: |
+          npm install
+          npm audit --audit-level=moderate
+
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: self-hosted
+    needs: dependency-check
+    if: |
+      github.event.action != 'closed' &&
+      needs.dependency-check.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+      - uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      - uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        id: sonarqube-quality-gate
+      
+      - name: Post SonarQube Success Comment
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.issue.number;
+            const dashboardUrl = 'http://10.76.2.96:3000/dashboard?id=Detector';
+            const comment = `## SonarQube Quality Gate Passed
+            
+            The SonarQube Quality Gate has passed successfully!
+            
+            **Dashboard:** [View Results](${dashboardUrl})
+            
+            You can view detailed analysis results, code coverage, and quality metrics on the SonarQube dashboard.`;
+            
+            // Check for existing comment from this bot and delete it
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            
+            const botComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('SonarQube Quality Gate')
+            );
+            
+            if (botComment) {
+              // Delete existing comment
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id
+              });
+            }
+            
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: comment
+            });
+
+      - name: Post SonarQube Failure Comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.issue.number;
+            const dashboardUrl = 'http://10.76.2.96:3000/dashboard?id=Detector';
+            const comment = `## SonarQube Quality Gate Failed
+            
+            The SonarQube Quality Gate has failed. Please review the issues and fix them before proceeding.
+            
+            **Dashboard:** [View Results](${dashboardUrl})
+            
+            Check the SonarQube dashboard for detailed analysis of code quality issues, bugs, vulnerabilities, and code smells.`;
+            
+            // Check for existing comment from this bot and delete it
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            
+            const botComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('SonarQube Quality Gate')
+            );
+            
+            if (botComment) {
+              // Delete existing comment
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id
+              });
+            }
+            
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: comment
+            });
+
+  deploy-lookaside:
+    runs-on: self-hosted
+    needs: [run-tests, run-linter, dependency-check, sonarqube]
+    if: |
+      github.event.action != 'closed' &&
+      needs.run-tests.result == 'success' &&
+      needs.run-linter.result == 'success' &&
+      needs.dependency-check.result == 'success' &&
+      needs.sonarqube.result == 'success'
+    steps:
+      - name: Set PR information
+        id: pr-info
+        run: |
+          echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "pr_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+          echo "pr_ref=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
+
+      - name: Checkout PR branch (for lookaside deployment)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-info.outputs.pr_sha }}
+          fetch-depth: 0
+
+      - name: Install python for actions
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H csc519-129-host.csc.ncsu.edu >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install --user ansible
+        env:
+          PATH: ${{ env.PATH }}:$HOME/.local/bin
+
+      - name: Add local bin to PATH
+        run: |
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Set PR number
+        id: set-pr-number
+        run: |
+          echo "pr_number=${{ steps.pr-info.outputs.pr_number }}" >> $GITHUB_OUTPUT
+
+      - name: Determine if lookaside exists
+        id: check-lookaside
+        run: |
+          PR_NUMBER=${{ steps.set-pr-number.outputs.pr_number }}
+          if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no cwelchik@csc519-129-host.csc.ncsu.edu \
+            "docker ps --filter 'name=lookaside-pr${PR_NUMBER}-detector-app' --filter 'status=running' --format '{{.Names}}' | grep -q 'lookaside-pr${PR_NUMBER}-detector-app'" 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or update lookaside instance
+        run: |
+          cd ansible
+          PR_NUMBER=${{ steps.set-pr-number.outputs.pr_number }}
+          if [ "${{ steps.check-lookaside.outputs.exists }}" == "true" ]; then
+            ansible-playbook -i inventory.ini playbooks/create_lookaside.yml -e pr_number=${PR_NUMBER} -e update=true
+          else
+            ansible-playbook -i inventory.ini playbooks/create_lookaside.yml -e pr_number=${PR_NUMBER}
+          fi
+
+      - name: Checkout main branch (for nginx update)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update nginx configuration
+        run: |
+          cd ansible
+          ansible-playbook -i inventory.ini playbook.yml
+
+      - name: Post lookaside URL comment on PR
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = ${{ steps.set-pr-number.outputs.pr_number }};
+            const lookasideUrl = `http://csc519-129-host.csc.ncsu.edu/pr-${prNumber}/`;
+            const comment = `## Preview Instance Deployed
+            
+            Your lookaside instance has been successfully deployed!
+            
+            **Lookaside URL:** [${lookasideUrl}](${lookasideUrl})
+            
+            The preview instance is running the code from this PR and is accessible at the URL above.`;
+            
+            // Check for existing comment from this bot and delete it
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            
+            const botComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Lookaside Instance Deployed')
+            );
+            
+            if (botComment) {
+              // Delete existing comment
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id
+              });
+            }
+            
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: comment
+            });
+
+      - name: Clean up SSH
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+
+  delete-lookaside:
+    runs-on: self-hosted
+    if: github.event.action == 'closed'
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+          persist-credentials: true
+
+      - name: Merge release branch into main (if PR was merged)
+        if: github.event.pull_request.merged == true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global credential.helper store
+          echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
+          git fetch origin ${{ github.event.pull_request.head.ref }}
+          git merge origin/${{ github.event.pull_request.head.ref }} -m "Merge release branch ${{ github.event.pull_request.head.ref }} into main for production deployment"
+          git push origin main
+
+      - name: Checkout main branch (after merge, for nginx update)
+        if: github.event.pull_request.merged == true
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install python for actions
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H csc519-129-host.csc.ncsu.edu >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install --user ansible
+        env:
+          PATH: ${{ env.PATH }}:$HOME/.local/bin
+
+      - name: Add local bin to PATH
+        run: |
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Delete lookaside instance
+        run: |
+          cd ansible
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          ansible-playbook -i inventory.ini playbooks/delete_lookaside.yml -e pr_number=${PR_NUMBER} || true
+
+      - name: Update nginx configuration
+        run: |
+          cd ansible
+          ansible-playbook -i inventory.ini playbook.yml
+
+      - name: Clean up SSH
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+

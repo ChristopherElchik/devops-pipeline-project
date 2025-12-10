@@ -1,0 +1,71 @@
+---
+- name: Deploy Detector App with Nginx Reverse Proxy
+  hosts: production
+  become: no
+  vars:
+    app_name: detector-app
+    app_user: cwelchik
+    app_dir: /home/{{ app_user }}/{{ app_name }}
+    production_port: 3000
+    lookaside_base_port: 3001
+    instances_dir: "{{ app_dir }}/instances"
+    
+  tasks:
+    - name: Get all existing lookaside instances
+      find:
+        paths: "{{ instances_dir }}"
+        patterns: "lookaside-pr*"
+        file_type: directory
+      register: existing_lookaside_dirs
+      ignore_errors: yes
+      become: no
+
+    - name: Extract ports from existing lookaside docker-compose files
+      shell: |
+        if [ -f "{{ item.path }}/docker-compose.yml" ]; then
+          grep -o '"[0-9]*:3000' "{{ item.path }}/docker-compose.yml" | grep -o '[0-9]*' | head -1
+        fi
+      register: existing_lookaside_port_extraction
+      loop: "{{ existing_lookaside_dirs.files | default([]) }}"
+      when: existing_lookaside_dirs is defined and existing_lookaside_dirs.files is defined
+      become: no
+      changed_when: false
+
+    - name: Check if existing lookaside containers are actually running
+      shell: |
+        container_name="{{ item.item.path | basename }}-detector-app"
+        if docker ps --filter "name=${container_name}" --filter "status=running" | grep -q "${container_name}"; then
+          echo "running"
+        else
+          echo "not_running"
+        fi
+      register: existing_container_status_check
+      loop: "{{ existing_lookaside_port_extraction.results | default([]) }}"
+      when: item.stdout is defined and item.stdout != ""
+      become: no
+      changed_when: false
+
+    - name: Build lookaside instances list from existing (only running containers)
+      set_fact:
+        lookaside_instances: "{{ lookaside_instances | default([]) + [{'pr_number': (item.item.item.path | basename | regex_replace('lookaside-pr', '')), 'port': (item.item.stdout | int) | default(lookaside_base_port | int + (item.item.item.path | basename | regex_replace('lookaside-pr', '') | int))}] }}"
+      loop: "{{ existing_container_status_check.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.item.path }}"
+      when: item.item.stdout is defined and item.item.stdout != "" and item.stdout == "running"
+      become: no
+
+    - name: Build lookaside instances list for instances without docker-compose (fallback)
+      set_fact:
+        lookaside_instances: "{{ lookaside_instances | default([]) + [{'pr_number': (item.path | basename | regex_replace('lookaside-pr', '')), 'port': (lookaside_base_port | int + (item.path | basename | regex_replace('lookaside-pr', '') | int))}] }}"
+      loop: "{{ existing_lookaside_dirs.files | default([]) }}"
+      when: >
+        existing_lookaside_dirs is defined and 
+        existing_lookaside_dirs.files is defined and
+        item.path not in (existing_lookaside_port_extraction.results | default([]) | 
+        map(attribute='item.path') | list)
+      become: no
+
+    - name: Include deployment tasks
+      include_role:
+        name: deploy
+        tasks_from: main

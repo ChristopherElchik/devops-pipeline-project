@@ -1,0 +1,31 @@
+services:
+  {{ instance_name }}-app:
+    build:
+{% if app_dir_path is defined and app_dir_path != app_dir %}
+      context: ./code
+      dockerfile: Dockerfile
+{% else %}
+      context: {{ app_dir | quote }}
+      dockerfile: Dockerfile
+{% endif %}
+    container_name: {{ instance_name }}-detector-app
+    ports:
+      - "{{ instance_port }}:3000"
+    volumes:
+      # Persist database and photos outside container
+      - ./instance:/app/instance
+      - ./saved_photos:/app/saved_photos
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-this}
+      - DATABASE_PATH=/app/instance/gooberdetector.db
+      - UPLOAD_FOLDER=/app/saved_photos
+    restart: unless-stopped
+    networks:
+      - detector-network
+
+networks:
+  detector-network:
+    name: detector-network
+    external: true
+

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Database files (will be created in container)
+instance/*.db
+*.db
+
+# Saved photos (will be created in container)
+saved_photos/
+
+# Documentation
+README.md
+LICENSE
+*.md
+
+# Assets (optional, but keeping for now)
+assets/
+
+# Logs
+*.log
+

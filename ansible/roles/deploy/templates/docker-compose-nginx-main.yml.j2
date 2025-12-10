@@ -1,0 +1,17 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: detector-app-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    networks:
+      - detector-network
+
+networks:
+  detector-network:
+    name: detector-network
+    external: true
+

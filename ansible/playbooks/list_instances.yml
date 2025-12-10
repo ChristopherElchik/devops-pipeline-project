@@ -1,0 +1,42 @@
+---
+- name: List All Instances
+  hosts: production
+  become: no
+  vars:
+    app_name: detector-app
+    app_user: cwelchik
+    app_dir: /home/{{ app_user }}/{{ app_name }}
+    instances_dir: "{{ app_dir }}/instances"
+    
+  tasks:
+    - name: Check if production instance exists
+      stat:
+        path: "{{ instances_dir }}/production"
+      register: production_exists
+      become: no
+
+    - name: Get all lookaside instances
+      find:
+        paths: "{{ instances_dir }}"
+        patterns: "lookaside-pr*"
+        file_type: directory
+      register: lookaside_dirs
+      become: no
+
+    - name: Display production instance status
+      debug:
+        msg: "Production instance: {{ 'EXISTS' if production_exists.stat.exists else 'NOT FOUND' }}"
+      become: no
+
+    - name: Display lookaside instances
+      debug:
+        msg: "Lookaside instances found: {{ lookaside_dirs.files | default([]) | map(attribute='path') | map('basename') | list }}"
+      when: lookaside_dirs.files is defined
+      become: no
+
+    - name: Show no lookaside instances message
+      debug:
+        msg: "No lookaside instances found"
+      when: lookaside_dirs.files is not defined or lookaside_dirs.files | length == 0
+      become: no
+

@@ -1,0 +1,114 @@
+---
+# Deployment tasks
+# Assumes Docker is already installed and user can run docker commands
+
+- name: Check if Docker is available
+  command: docker --version
+  register: docker_check
+  changed_when: false
+  failed_when: docker_check.rc != 0
+  become: no
+
+- name: Check if Docker Compose (v2) is available
+  command: docker compose version
+  register: docker_compose_check
+  changed_when: false
+  failed_when: docker_compose_check.rc != 0
+  become: no
+
+- name: Fail if Docker Compose is not available
+  fail:
+    msg: "Docker Compose v2 is not available. Please ensure 'docker compose' plugin is installed."
+  when: docker_compose_check.rc != 0
+
+# Note: We use direct docker compose commands instead of the Ansible docker_compose module
+# because the module requires the Python docker library, which we cannot install without pip
+
+- name: Create application directory structure
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ app_dir }}"
+    - "{{ instances_dir }}"
+    - "{{ instances_dir }}/production"
+    - "{{ app_dir }}/nginx"
+    - "{{ app_dir }}/nginx/conf.d"
+  become: no
+
+- name: Copy application files to server
+  synchronize:
+    src: "{{ playbook_dir }}/../"
+    dest: "{{ app_dir }}"
+    delete: no
+    rsync_opts:
+      - "--exclude=venv"
+      - "--exclude=node_modules"
+      - "--exclude=.git"
+      - "--exclude=__pycache__"
+      - "--exclude=*.pyc"
+      - "--exclude=instance"
+      - "--exclude=saved_photos"
+      - "--exclude=ansible"
+  delegate_to: localhost
+  become: no
+
+- name: Create production instance directory structure
+  file:
+    path: "{{ instances_dir }}/production/{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - instance
+    - saved_photos
+  become: no
+
+- name: Create shared Docker network if it doesn't exist
+  shell: docker network create detector-network || true
+  become: no
+
+- name: Generate production docker-compose file
+  template:
+    src: docker-compose-instance.yml.j2
+    dest: "{{ instances_dir }}/production/docker-compose.yml"
+    mode: '0644'
+  vars:
+    instance_name: production
+    instance_port: "{{ production_port }}"
+    app_dir_path: "{{ app_dir }}"
+  become: no
+
+- name: Build and start production container
+  shell: |
+    cd {{ instances_dir }}/production
+    docker compose up -d --build
+  become: no
+
+- name: Generate main nginx configuration
+  template:
+    src: nginx-main.conf.j2
+    dest: "{{ app_dir }}/nginx/nginx.conf"
+    mode: '0644'
+  become: no
+
+- name: Generate main docker-compose with nginx
+  template:
+    src: docker-compose-nginx-main.yml.j2
+    dest: "{{ app_dir }}/docker-compose.yml"
+    mode: '0644'
+  vars:
+    nginx_port: "80"
+  become: no
+
+- name: Build and start main nginx container
+  shell: |
+    cd {{ app_dir }}
+    docker compose up -d --force-recreate
+  become: no
+
+- name: Ensure nginx container is connected to detector-network
+  shell: |
+    docker network connect detector-network detector-app-nginx || true
+  become: no
+

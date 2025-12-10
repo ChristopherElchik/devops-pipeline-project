@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goober Detector - Face Tracking</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #b530f2 0%, #ff39f8 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            max-width: 800px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.2em;
+        }
+        
+        .video-container {
+            position: relative;
+            display: inline-block;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        #video {
+            display: none; /* Hide the actual video element */
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            max-width: 640px;
+            height: auto;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        
+        .status.detecting {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.no-camera {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .instructions {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            text-align: left;
+        }
+        
+        .instructions h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+        
+        .instructions ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin: 5px 0;
+            color: #6c757d;
+        }
+        
+        .stats-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .stat-card {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .stat-card h3 {
+            margin-top: 0;
+            color: #495057;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        
+        .stat-card p {
+            margin: 8px 0;
+            color: #6c757d;
+        }
+        
+        .controls-container {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .save-photo-button, .gallery-button {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+        
+        .save-photo-button:hover {
+            background-color: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .save-photo-button:active {
+            transform: translateY(0);
+        }
+        
+        .save-photo-button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .gallery-button {
+            background-color: #007bff;
+        }
+        
+        .gallery-button:hover {
+            background-color: #0056b3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .gallery-link {
+            text-decoration: none;
+        }
+        
+        .message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Goober Detector</h1>
+        <p class="subtitle">Real-time Face Tracking with OpenCV</p>
+        
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <div id="status" class="status detecting">
+            Face detection active - Look at the camera!
+        </div>
+        
+        <div class="controls-container">
+            <button id="save-photo-btn" onclick="savePhoto()" class="save-photo-button">
+                📸 Save Photo
+            </button>
+            <a href="gallery" class="gallery-link">
+                <button class="gallery-button">
+                    View Gallery
+                </button>
+            </a>
+        </div>
+        
+        <div class="instructions">
+            <h3>How it works:</h3>
+            <ul>
+                <li>This app uses OpenCV's Haar Cascade classifier to detect faces</li>
+                <li>Detected faces are highlighted with a green rectangle</li>
+                <li>The detection runs in real-time using your webcam</li>
+                <li>Click "Save Photo" to capture the current frame with face detection</li>
+                <li>View all saved photos in the gallery</li>
+                <li>Make sure your camera is enabled and you're in good lighting</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Get the base path (e.g., '/pr-42/' or '/')
+        function getBasePath() {
+            const path = window.location.pathname;
+            // If we're in a lookaside instance (path starts with /pr-), extract the base path
+            const match = path.match(/^(\/pr-\d+)/);
+            if (match) {
+                return match[1] + '/';
+            }
+            return '/';
+        }
+        
+        const basePath = getBasePath();
+        
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const status = document.getElementById('status');
+        
+        let stream = null;
+        let detectionInterval = null;
+        let isDetecting = false;
+        
+        // Current detected faces
+        let currentFaces = [];
+        
+        // Initialize webcam
+        async function initWebcam() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    } 
+                });
+                
+                video.srcObject = stream;
+                status.className = 'status detecting';
+                status.innerHTML = 'Face detection active - Look at the camera!';
+                
+                // Wait for video to be ready
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    startDetection();
+                };
+            } catch (error) {
+                console.error('Error accessing webcam:', error);
+                status.className = 'status no-camera';
+                status.innerHTML = '❌ Camera not accessible. Please allow camera access and refresh the page.';
+            }
+        }
+        
+        // Start face detection loop
+        function startDetection() {
+            if (isDetecting) return;
+            isDetecting = true;
+            
+            // Detect faces every 200ms (5 times per second)
+            detectionInterval = setInterval(detectFaces, 200);
+        }
+        
+        // Stop face detection
+        function stopDetection() {
+            if (detectionInterval) {
+                clearInterval(detectionInterval);
+                detectionInterval = null;
+            }
+            isDetecting = false;
+        }
+        
+        // Draw video frame and face rectangles
+        function drawFrame() {
+            // Draw video frame (mirrored)
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+            ctx.restore();
+            
+            // Draw face rectangles
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            for (const face of currentFaces) {
+                // Mirror the x coordinate
+                const mirroredX = canvas.width - face.x - face.width;
+                ctx.strokeRect(mirroredX, face.y, face.width, face.height);
+            }
+        }
+        
+        // Capture frame and send for detection
+        async function detectFaces() {
+            if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+            
+            // Create temporary canvas to capture unmirrored frame for detection
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = video.videoWidth;
+            tempCanvas.height = video.videoHeight;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(video, 0, 0);
+            
+            // Get image data as base64 (unmirrored)
+            const imageData = tempCanvas.toDataURL('image/jpeg', 0.8);
+            
+            try {
+                const response = await fetch(`${basePath}api/detect_faces`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ image: imageData })
+                });
+                
+                const data = await response.json();
+                if (data.faces) {
+                    currentFaces = data.faces;
+                    // Redraw with updated faces
+                    drawFrame();
+                    
+                    // Update status with face count
+                    if (data.face_count > 0) {
+                        status.innerHTML = `Face detection active - ${data.face_count} face${data.face_count > 1 ? 's' : ''} detected!`;
+                    } else {
+                        status.innerHTML = 'Face detection active - Look at the camera!';
+                    }
+                }
+            } catch (error) {
+                console.error('Error detecting faces:', error);
+            }
+        }
+        
+        // Capture frame as base64 for saving (backend will draw rectangles)
+        function captureFrame() {
+            // Capture unmirrored frame for saving
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = video.videoWidth;
+            tempCanvas.height = video.videoHeight;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(video, 0, 0);
+            
+            // Backend will draw face rectangles on the saved image
+            return tempCanvas.toDataURL('image/jpeg', 0.9);
+        }
+        
+        function showMessage(text, isError = false) {
+            // Remove existing message if any
+            const existingMessage = document.querySelector('.message');
+            if (existingMessage) {
+                existingMessage.remove();
+            }
+            
+            // Create new message
+            const message = document.createElement('div');
+            message.className = `message ${isError ? 'error' : 'success'}`;
+            message.textContent = text;
+            
+            // Insert after controls container
+            const controlsContainer = document.querySelector('.controls-container');
+            controlsContainer.parentNode.insertBefore(message, controlsContainer.nextSibling);
+            
+            // Auto-remove after 3 seconds
+            setTimeout(() => {
+                if (message.parentNode) {
+                    message.remove();
+                }
+            }, 3000);
+        }
+        
+        function savePhoto() {
+            const button = document.getElementById('save-photo-btn');
+            const originalText = button.textContent;
+            
+            if (!stream) {
+                showMessage('Please allow camera access first.', true);
+                return;
+            }
+            
+            // Disable button and show loading state
+            button.disabled = true;
+            button.textContent = 'Saving...';
+            
+            // Capture current frame
+            const imageData = captureFrame();
+            
+            fetch(`${basePath}api/save_photo`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ image: imageData })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showMessage('Error: ' + data.error, true);
+                    } else {
+                        const faceText = data.face_count === 1 ? 'face' : 'faces';
+                        showMessage(`Photo saved! Detected ${data.face_count} ${faceText}.`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error saving photo:', error);
+                    showMessage('Error saving photo. Please try again.', true);
+                })
+                .finally(() => {
+                    // Re-enable button
+                    button.disabled = false;
+                    button.textContent = originalText;
+                });
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initWebcam();
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            stopDetection();
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>

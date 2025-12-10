@@ -1,0 +1,145 @@
+---
+- name: Delete Lookaside Instance for PR
+  hosts: production
+  become: no
+  vars:
+    app_name: detector-app
+    app_user: cwelchik
+    app_dir: /home/{{ app_user }}/{{ app_name }}
+    instances_dir: "{{ app_dir }}/instances"
+    production_port: 3000
+    lookaside_base_port: 3001
+    
+  tasks:
+    - name: Validate PR number is provided
+      fail:
+        msg: "PR number must be provided via -e pr_number=<number>"
+      when: pr_number is not defined
+      become: no
+
+    - name: Check if lookaside instance exists
+      stat:
+        path: "{{ instances_dir }}/lookaside-pr{{ pr_number }}"
+      register: lookaside_exists
+      become: no
+
+    - name: Fail if instance does not exist
+      fail:
+        msg: "Lookaside instance for PR {{ pr_number }} does not exist"
+      when: not lookaside_exists.stat.exists
+      become: no
+
+    - name: Stop and remove lookaside container
+      shell: |
+        cd {{ instances_dir }}/lookaside-pr{{ pr_number }}
+        docker compose down
+      become: no
+      ignore_errors: yes
+
+    - name: Remove lookaside instance directory
+      file:
+        path: "{{ instances_dir }}/lookaside-pr{{ pr_number }}"
+        state: absent
+      become: no
+
+    - name: Get all remaining lookaside instances
+      find:
+        paths: "{{ instances_dir }}"
+        patterns: "lookaside-pr*"
+        file_type: directory
+      register: remaining_lookaside_dirs
+      become: no
+
+    - name: Extract ports from remaining lookaside docker-compose files
+      shell: |
+        if [ -f "{{ item.path }}/docker-compose.yml" ]; then
+          grep -o '"[0-9]*:3000' "{{ item.path }}/docker-compose.yml" | grep -o '[0-9]*' | head -1
+        fi
+      register: remaining_lookaside_port_extraction
+      loop: "{{ remaining_lookaside_dirs.files | default([]) }}"
+      become: no
+      changed_when: false
+
+    - name: Check if remaining lookaside containers are actually running
+      shell: |
+        container_name="{{ item.item.path | basename }}-detector-app"
+        if docker ps --filter "name=${container_name}" --filter "status=running" | grep -q "${container_name}"; then
+          echo "running"
+        else
+          echo "not_running"
+        fi
+      register: remaining_container_status_check
+      loop: "{{ remaining_lookaside_port_extraction.results | default([]) }}"
+      when: item.stdout is defined and item.stdout != ""
+      become: no
+      changed_when: false
+
+    - name: Build lookaside instances list from remaining (only running containers)
+      set_fact:
+        lookaside_instances: "{{ lookaside_instances | default([]) + [{'pr_number': (item.item.item.path | basename | regex_replace('lookaside-pr', '')), 'port': (item.item.stdout | int) | default(lookaside_base_port | int + (item.item.item.path | basename | regex_replace('lookaside-pr', '') | int))}] }}"
+      loop: "{{ remaining_container_status_check.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.item.path }}"
+      when: item.item.stdout is defined and item.item.stdout != "" and item.stdout == "running"
+      become: no
+
+    - name: Build lookaside instances list for instances without docker-compose (fallback)
+      set_fact:
+        lookaside_instances: "{{ lookaside_instances | default([]) + [{'pr_number': (item.path | basename | regex_replace('lookaside-pr', '')), 'port': (lookaside_base_port | int + (item.path | basename | regex_replace('lookaside-pr', '') | int))}] }}"
+      loop: "{{ remaining_lookaside_dirs.files | default([]) }}"
+      when: >
+        item.path not in (remaining_lookaside_port_extraction.results | default([]) | 
+        map(attribute='item.path') | list)
+      become: no
+
+    - name: Update nginx configuration without deleted instance
+      template:
+        src: ../roles/deploy/templates/nginx-main.conf.j2
+        dest: "{{ app_dir }}/nginx/nginx.conf"
+        mode: '0644'
+      become: no
+
+    - name: Wait for nginx container to be running
+      shell: |
+        for i in {1..30}; do
+          if docker ps --filter "name=detector-app-nginx" --filter "status=running" | grep -q detector-app-nginx; then
+            exit 0
+          fi
+          sleep 1
+        done
+        exit 1
+      become: no
+      ignore_errors: yes
+      register: nginx_wait
+      
+    - name: Test nginx configuration
+      shell: docker exec detector-app-nginx nginx -t
+      become: no
+      ignore_errors: yes
+      register: nginx_test
+      
+    - name: Reload nginx configuration if test passed
+      shell: docker exec detector-app-nginx nginx -s reload
+      become: no
+      when: nginx_test.rc == 0
+      ignore_errors: yes
+      
+    - name: Restart nginx container if config test failed
+      shell: docker restart detector-app-nginx
+      become: no
+      when: nginx_test.rc != 0
+      ignore_errors: yes
+      
+    - name: Wait for nginx container to restart
+      shell: |
+        sleep 3
+        for i in {1..30}; do
+          if docker ps --filter "name=detector-app-nginx" --filter "status=running" | grep -q detector-app-nginx; then
+            exit 0
+          fi
+          sleep 1
+        done
+        exit 1
+      become: no
+      when: nginx_test.rc != 0
+      ignore_errors: yes
