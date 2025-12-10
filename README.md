@@ -1,7 +1,7 @@
 # DevOps Final Project - Automated Deployment Pipeline
 This repository contains the final project for the CSC519 - DevOps class I took in Fall 2025. It contains a simple facial recognition app with an automated deployment pipeline using GitHub Actions and Ansible, alongside SonarQube quality gates. The focus of the project was on the CI/CD pipeline itself rather than the facial recognition app. See the [Project Report](https://github.com/ChristopherElchik/devops-pipeline-project/blob/9f796654a3f61e142ecdf354d4bcc3a2f960b343/Project%20Report.pdf) for highlights and implementation details. This README contains a guide to the repository.
 
-For the sake of the project requirements, all IP addresses and passwords were hardcoded, despite being bad practice, except for ssh keys. All elements of this project were self-hosted, including GitHub Actions runners, SonarQube, and all instances of the app itself, using NCSU's durable VCL instances. These instances have expired since we submitted the project, so the app won't be accessible-- I'm just leaving everything here as an artifact of a project I'm proud of.
+For the sake of the project requirements, all IP addresses and passwords were hardcoded, despite being bad practice, except for ssh keys. All elements of this project were self-hosted, including GitHub Actions runners, SonarQube, and all instances of the app itself, using NCSU's durable VCL instances. These instances have expired since we submitted the project, so the app won't be accessible-- I'm just leaving everything here as an artifact of a project I did in college.
 
 Here's a video demo and a diagram of the deployment pipeline. Specific details can be found below, as well as in the project report.
 
