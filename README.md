@@ -1,13 +1,18 @@
-# detector-app
-CSC519 Project
+# DevOps Final Project - Automated Deployment Pipeline
+This repository contains the final project for the CSC519 - DevOps class I took in Fall 2025. It contains a simple facial recognition app with an automated deployment pipeline using GitHub Actions and Ansible, alongside SonarQube quality gates. The focus of the project was on the CI/CD pipeline itself rather than the facial recognition app. See the [Project Report](https://github.com/ChristopherElchik/devops-pipeline-project/blob/9f796654a3f61e142ecdf354d4bcc3a2f960b343/Project%20Report.pdf) for highlights and implementation details. This README contains a guide to the repository.
+
+For the sake of the project requirements, all IP addresses and passwords were hardcoded, despite being bad practice, except for ssh keys. All elements of this project were self-hosted, including GitHub Actions runners, SonarQube, and all instances of the app itself, using NCSU's durable VCL instances. These instances have expired since we submitted the project, so the app won't be accessible-- I'm just leaving everything here as an artifact of a project I'm proud of.
+
+Here's a video demo and a diagram of the deployment pipeline. Specific details can be found below, as well as in the project report.
+
+[demo video link](https://drive.google.com/file/d/1fDXvYC6459-LLFhq4fs6KrFQIH8s136t/view?usp=sharing)
+
+![pipeline](https://github.com/ChristopherElchik/devops-pipeline-project/blob/9f796654a3f61e142ecdf354d4bcc3a2f960b343/assets/final%20pipeline.svg)
 
 ### Team Members:
 
 - Christopher Elchik (cwelchik)
 - Jake McDavitt (jfmcdavi)
-
-### Project Proposal
-Wiki Link: https://github.ncsu.edu/cwelchik/detector-app/wiki/Project-Proposal
 
 ### App Info
 
@@ -22,8 +27,6 @@ To bypass facecam permissions (for chrome users), please do the following:
 The app's production server will be deployed here: http://csc519-129-host.csc.ncsu.edu
 
 ### Testing
-
-_Note that AI was used to assist in creating the unit tests._
 
 #### Backend Tests
 
